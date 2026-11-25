@@ -1,0 +1,1 @@
+# magsync-pages-test
