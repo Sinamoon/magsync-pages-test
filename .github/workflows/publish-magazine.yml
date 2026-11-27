@@ -49,12 +49,16 @@ jobs:
           PAGE_URL: ${{ steps.publish.outputs.page_url }}
         run: |
           for attempt in {1..12}; do
-            if curl -fsS --max-time 15 "${PAGE_URL%/}/atlas.png?run=$GITHUB_RUN_ID-$attempt" -o "$RUNNER_TEMP/published.png" &&
-               cmp -s atlas.png "$RUNNER_TEMP/published.png"; then
-              exit 0
-            fi
+            verified=true
+            for file in atlas.png magazine-*.png; do
+              if ! curl -fsS --max-time 15 "${PAGE_URL%/}/$file?run=$GITHUB_RUN_ID-$attempt" -o "$RUNNER_TEMP/published.png" ||
+                 ! cmp -s "$file" "$RUNNER_TEMP/published.png"; then
+                verified=false
+                break
+              fi
+            done
+            if "$verified"; then exit 0; fi
             sleep 5
           done
-          echo "::error::GitHub Pages is not serving the deployed atlas."
+          echo "::error::GitHub Pages is not serving the generated magazine images."
           exit 1
-

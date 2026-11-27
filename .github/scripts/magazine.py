@@ -10,24 +10,31 @@ from PIL import Image, ImageOps
 ATLAS_SIZE = (1024, 1536)
 PAGE_SIZE = (512, 768)
 MAX_FILE_SIZE = 20 * 1024 * 1024
-PAGE_NAMES = ("1", "2", "3", "4")
+MAX_PAGES = 50
+PAGES_PER_SHEET = 8
 PAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
 
 
 def select_assets(assets):
-    files = {asset["name"].lower(): asset for asset in assets}
-    if "atlas.png" in files and len(assets) == 1:
-        return [files["atlas.png"]]
+    if len(assets) == 1 and assets[0]["name"].lower() == "atlas.png":
+        return assets
+    if not 1 <= len(assets) <= MAX_PAGES:
+        raise ValueError(f"Attach 1 to {MAX_PAGES} numbered images.")
 
-    pages = []
-    for number in PAGE_NAMES:
-        matches = [files[number + suffix] for suffix in PAGE_EXTENSIONS if number + suffix in files]
-        if len(matches) != 1:
-            break
-        pages.append(matches[0])
-    if len(pages) == len(assets) == 4:
-        return pages
-    raise ValueError("Attach atlas.png alone, or four images named 1, 2, 3 and 4 with PNG, JPEG or WebP extensions.")
+    numbered = {}
+    for asset in assets:
+        name = Path(asset["name"].lower())
+        number = name.stem
+        if name.suffix not in PAGE_EXTENSIONS or number not in map(str, range(1, MAX_PAGES + 1)):
+            raise ValueError(f"Unexpected file: {asset['name']}. Use names such as 1.png.")
+        index = int(number)
+        if index in numbered:
+            raise ValueError(f"Page {index} has more than one file.")
+        numbered[index] = asset
+    for index in range(1, len(assets) + 1):
+        if index not in numbered:
+            raise ValueError(f"Missing image for page {index}.")
+    return [numbered[index] for index in range(1, len(assets) + 1)]
 
 
 def download_assets(assets, destination):
@@ -49,26 +56,43 @@ def download_assets(assets, destination):
     return paths
 
 
-def build_atlas(images, output):
-    if len(images) == 1:
+def render_sheet(pages, columns, size):
+    sheet = Image.new("RGB", size, "white")
+    width, height = PAGE_SIZE
+    for index, page in enumerate(pages):
+        sheet.paste(page, (index % columns * width, index // columns * height), page)
+    return sheet
+
+
+def build_magazine(images, output, legacy_atlas=False):
+    if legacy_atlas:
         with Image.open(images[0], formats=["PNG"]) as atlas:
             if atlas.size != ATLAS_SIZE:
                 raise ValueError("atlas.png must be 1024 by 1536 pixels.")
             atlas.verify()
         with Image.open(images[0], formats=["PNG"]) as atlas:
             atlas.load()
-        shutil.copyfile(images[0], output)
-        return
+            pages = [
+                atlas.crop((x, y, x + 512, y + 768)).convert("RGBA")
+                for y in (0, 768) for x in (0, 512)
+            ]
+        shutil.copyfile(images[0], output / "atlas.png")
+    else:
+        pages = []
+        for path in images:
+            with Image.open(path, formats=["PNG", "JPEG", "WEBP"]) as image:
+                pages.append(ImageOps.fit(
+                    ImageOps.exif_transpose(image).convert("RGBA"),
+                    PAGE_SIZE, method=Image.Resampling.LANCZOS,
+                ))
+        render_sheet(pages[:4], 2, ATLAS_SIZE).save(output / "atlas.png", optimize=True)
 
-    atlas = Image.new("RGB", ATLAS_SIZE, "white")
-    for index, path in enumerate(images):
-        with Image.open(path, formats=["PNG", "JPEG", "WEBP"]) as image:
-            page = ImageOps.fit(
-                ImageOps.exif_transpose(image).convert("RGBA"),
-                PAGE_SIZE, method=Image.Resampling.LANCZOS,
-            )
-        atlas.paste(page, ((index % 2) * PAGE_SIZE[0], (index // 2) * PAGE_SIZE[1]), page)
-    atlas.save(output, format="PNG", optimize=True)
+    # The unshown bottom rows carry the page count in the PNG dimensions.
+    sheet_size = (PAGE_SIZE[0] * 4, PAGE_SIZE[1] * 2 + len(pages))
+    for start in range(0, len(pages), PAGES_PER_SHEET):
+        number = start // PAGES_PER_SHEET + 1
+        sheet = render_sheet(pages[start:start + PAGES_PER_SHEET], 4, sheet_size)
+        sheet.save(output / f"magazine-{number}.png", optimize=True)
 
 
 def main():
@@ -81,9 +105,11 @@ def main():
     output_dir = Path("_site")
     output_dir.mkdir()
     with tempfile.TemporaryDirectory() as directory:
-        images = download_assets(select_assets(release["assets"]), Path(directory))
-        build_atlas(images, output_dir / "atlas.png")
+        assets = select_assets(release["assets"])
+        images = download_assets(assets, Path(directory))
+        build_magazine(images, output_dir, assets[0]["name"].lower() == "atlas.png")
 
 
 if __name__ == "__main__":
     main()
+
