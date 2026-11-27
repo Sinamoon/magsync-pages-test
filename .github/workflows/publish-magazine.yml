@@ -1,15 +1,15 @@
 name: Publish magazine images
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to republish (optional)
+        type: string
   release:
     types: [published]
 
 permissions:
   contents: read
-
-concurrency:
-  group: magsync-pages
-  cancel-in-progress: false
 
 jobs:
   build:
@@ -18,7 +18,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
@@ -27,6 +26,7 @@ jobs:
       - name: Prepare and validate the magazine
         env:
           GH_TOKEN: ${{ github.token }}
+          MAGAZINE_RELEASE_TAG: ${{ inputs.release_tag }}
         run: python .github/scripts/magazine.py
       - uses: actions/upload-pages-artifact@v4
         with:
@@ -41,6 +41,23 @@ jobs:
       name: github-pages
       url: ${{ steps.publish.outputs.page_url }}
     steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: github-pages
+      - run: tar -xf artifact.tar atlas.png
       - name: Deploy the magazine
         id: publish
         uses: actions/deploy-pages@v4
+      - name: Verify published image
+        env:
+          PAGE_URL: ${{ steps.publish.outputs.page_url }}
+        run: |
+          for attempt in {1..12}; do
+            if curl -fsS --max-time 15 "${PAGE_URL%/}/atlas.png?run=$GITHUB_RUN_ID-$attempt" -o "$RUNNER_TEMP/published.png" &&
+               cmp -s atlas.png "$RUNNER_TEMP/published.png"; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::GitHub Pages is not serving the deployed atlas."
+          exit 1

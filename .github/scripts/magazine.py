@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 
 from PIL import Image, ImageOps
 
@@ -76,8 +77,19 @@ def main():
     output_dir = Path("_site")
     output_dir.mkdir()
     with tempfile.TemporaryDirectory() as directory:
-        if "release" in event:
-            assets = select_assets(event["release"]["assets"])
+        release = event.get("release")
+        tag = os.environ.get("MAGAZINE_RELEASE_TAG")
+        if tag:
+            if not tag.startswith("mag-"):
+                raise ValueError("The release tag must start with mag-.")
+            repository = os.environ["GITHUB_REPOSITORY"]
+            release = json.loads(subprocess.check_output(
+                ["gh", "api", f"repos/{repository}/releases/tags/{quote(tag, safe='')}"]
+            ))
+            if release["draft"]:
+                raise ValueError("Publish the release first.")
+        if release:
+            assets = select_assets(release["assets"])
             images = download_assets(assets, Path(directory))
         else:
             images = [Path("atlas.png")]
@@ -86,3 +98,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
