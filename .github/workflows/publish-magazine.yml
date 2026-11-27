@@ -12,8 +12,6 @@ jobs:
   build:
     if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
-    outputs:
-      artifact_id: ${{ steps.artifact.outputs.artifact_id }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -27,7 +25,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python .github/scripts/magazine.py
       - uses: actions/upload-pages-artifact@v4
-        id: artifact
         with:
           path: _site
   deploy:
@@ -46,29 +43,7 @@ jobs:
       - run: tar -xf artifact.tar
       - name: Deploy the magazine
         id: publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARTIFACT_ID: ${{ needs.build.outputs.artifact_id }}
-        run: |
-          set -euo pipefail
-          oidc=$(curl -fsS --max-time 15 -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -er .value)
-          echo "::add-mask::$oidc"
-          version=$(printf '%s' "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" | sha1sum | cut -d ' ' -f 1)
-          deployment=$(jq -n --argjson artifact "$ARTIFACT_ID" --arg version "$version" --arg token "$oidc" \
-            '{artifact_id:$artifact,environment:"github-pages",pages_build_version:$version,oidc_token:$token}' |
-            gh api --method POST "repos/$GITHUB_REPOSITORY/pages/deployments" --input -)
-          id=$(jq -er .id <<< "$deployment")
-          echo "Pages deployment: $id"
-          for attempt in {1..36}; do
-            status=$(gh api "repos/$GITHUB_REPOSITORY/pages/deployments/$id/status" --jq .status)
-            case "$status" in
-              succeed) echo "page_url=$(jq -er .page_url <<< "$deployment")" >> "$GITHUB_OUTPUT"; exit 0 ;;
-              deployment_failed|deployment_cancelled|deployment_attempt_error) echo "::error::Pages deployment $status"; exit 1 ;;
-            esac
-            sleep 5
-          done
-          echo "::error::Timed out waiting for Pages deployment."
-          exit 1
+        uses: actions/deploy-pages@v4
       - name: Verify published image
         env:
           PAGE_URL: ${{ steps.publish.outputs.page_url }}
