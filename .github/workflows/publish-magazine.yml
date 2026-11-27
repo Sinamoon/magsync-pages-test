@@ -44,7 +44,7 @@ jobs:
       - uses: actions/download-artifact@v5
         with:
           name: github-pages
-      - run: tar -xf artifact.tar atlas.png
+      - run: tar -xf artifact.tar
       - name: Deploy the magazine
         id: publish
         uses: actions/deploy-pages@v4
